@@ -281,24 +281,41 @@ const todayKey = dk(today);
 
     /* ── Content column ── */
     .day-content {
-      padding: 4px 0 4px 12px;
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+    }
+
+    /* Vertical bars column for span days (only rendered when non-empty) */
+    .spans-col {
+      display: flex;
+      flex-direction: row;
+      gap: 3px;
+      padding: 5px 8px 5px 12px;
+      align-self: stretch;
+      flex-shrink: 0;
+    }
+
+    .span-bar {
+      width: 3px;
+      border-radius: 2px;
+      align-self: stretch;
+    }
+    .span-bar.cat-action { background: var(--c-action); }
+    .span-bar.cat-exam   { background: var(--c-exam); }
+    .span-bar.cat-result { background: var(--c-result); }
+    .span-bar.cat-info   { background: var(--c-info); }
+    .span-bar.urgent     { background: var(--c-urgent); }
+
+    /* Cards column */
+    .cards-col {
+      flex: 1;
+      padding: 4px 12px 4px 12px;
       display: flex;
       flex-direction: column;
       gap: 3px;
       justify-content: center;
     }
-
-    /* Gantt-style bar for span days */
-    .span-bar {
-      height: 6px;
-      border-radius: 3px;
-      opacity: 0.55;
-    }
-    .span-bar.cat-action { background: var(--c-action-bg); color: var(--c-action); }
-    .span-bar.cat-exam   { background: var(--c-exam-bg);   color: var(--c-exam); }
-    .span-bar.cat-result { background: var(--c-result-bg); color: var(--c-result); }
-    .span-bar.cat-info   { background: var(--c-info-bg);   color: var(--c-info); }
-    .span-bar.urgent     { background: var(--c-urgent-bg); color: var(--c-urgent); }
 
     /* Full event card for start days */
     .event-card {
@@ -396,23 +413,29 @@ const todayKey = dk(today);
         </div>
 
         <div class="day-content">
-          {spanEntries.map(e => (
-            <div class={['span-bar', `cat-${e.event.category}`, e.event.urgent ? 'urgent' : ''].filter(Boolean).join(' ')}
-                 title={e.event.title}></div>
-          ))}
-          {startEntries.map(e => (
-            <div class={['event-card', `cat-${e.event.category}`, e.event.urgent ? 'urgent' : '', e.event.estimated ? 'estimated' : ''].filter(Boolean).join(' ')}>
-              <div class="ec-meta">
-                <span class="ec-date">{rangeLabel(e.event)}</span>
-                {e.event.timeEnd && <span class="ec-time">do godz. {e.event.timeEnd}</span>}
-                <span class={`badge badge-${e.event.urgent ? 'urgent' : e.event.category}`}>
-                  {e.event.urgent ? 'Krytyczny termin' : CAT_LABEL[e.event.category]}
-                </span>
-              </div>
-              <div class="ec-title">{e.event.title}</div>
-              <div class="ec-desc">{e.event.description}</div>
+          {spanEntries.length > 0 && (
+            <div class="spans-col">
+              {spanEntries.map(e => (
+                <div class={['span-bar', `cat-${e.event.category}`, e.event.urgent ? 'urgent' : ''].filter(Boolean).join(' ')}
+                     title={e.event.title}></div>
+              ))}
             </div>
-          ))}
+          )}
+          <div class="cards-col">
+            {startEntries.map(e => (
+              <div class={['event-card', `cat-${e.event.category}`, e.event.urgent ? 'urgent' : ''].filter(Boolean).join(' ')}>
+                <div class="ec-meta">
+                  <span class="ec-date">{rangeLabel(e.event)}</span>
+                  {e.event.timeEnd && <span class="ec-time">do godz. {e.event.timeEnd}</span>}
+                  <span class={`badge badge-${e.event.urgent ? 'urgent' : e.event.category}`}>
+                    {e.event.urgent ? 'Krytyczny termin' : CAT_LABEL[e.event.category]}
+                  </span>
+                </div>
+                <div class="ec-title">{e.event.title}</div>
+                <div class="ec-desc">{e.event.description}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </>;
