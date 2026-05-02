@@ -1,0 +1,436 @@
+---
+import fs from 'node:fs';
+import path from 'node:path';
+
+const timelineMd = fs.readFileSync(
+  path.resolve(process.cwd(), '../doc/timeline.md'),
+  'utf-8'
+);
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface Event {
+  id: string;
+  dateStart: string;
+  dateEnd?: string;
+  timeStart?: string;
+  timeEnd?: string;
+  title: string;
+  description: string;
+  category: 'action' | 'exam' | 'result' | 'info';
+  urgent?: boolean;
+  estimated?: boolean;
+}
+
+// ── Parse ─────────────────────────────────────────────────────────────────────
+
+function parseEvents(md: string): Event[] {
+  const events: Event[] = [];
+  for (const block of md.split(/\n### /).slice(1)) {
+    const lines = block.split('\n');
+    const id = lines[0].trim();
+    const f: Record<string, string> = {};
+    for (const line of lines.slice(1)) {
+      const m = line.match(/^- ([\w_]+):\s*(.+)$/);
+      if (m) f[m[1]] = m[2].replace(/^"|"$/g, '');
+    }
+    if (!f['title'] || f['hidden'] === 'true') continue;
+    events.push({
+      id,
+      dateStart: f['date'] ?? f['date_start'] ?? '',
+      dateEnd: f['date_end'],
+      timeStart: f['time'] ?? f['time_start'],
+      timeEnd: f['time_end'],
+      title: f['title'],
+      description: f['description'] ?? '',
+      category: (f['category'] as Event['category']) ?? 'info',
+      urgent: f['urgent'] === 'true',
+      estimated: f['estimated'] === 'true',
+    });
+  }
+  return events.sort((a, b) => a.dateStart.localeCompare(b.dateStart));
+}
+
+const events = parseEvents(timelineMd);
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+
+const DAY_PL = ['nd', 'pon', 'wt', 'śr', 'czw', 'pt', 'sob'];
+const MON_PL = ['Styczeń','Luty','Marzec','Kwiecień','Maj','Czerwiec',
+                'Lipiec','Sierpień','Wrzesień','Październik','Listopad','Grudzień'];
+
+function ld(s: string): Date {                      // local date from ISO string
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function dk(d: Date): string {                      // date key YYYY-MM-DD
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function rangeLabel(ev: Event): string {
+  const fmt = (s: string) => ld(s).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' });
+  if (ev.dateEnd && ev.dateEnd !== ev.dateStart) return `${fmt(ev.dateStart)} – ${fmt(ev.dateEnd)}`;
+  return ld(ev.dateStart).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+const CAT_LABEL: Record<string, string> = {
+  action: 'Do zrobienia',
+  exam:   'Sprawdzian / egzamin',
+  result: 'Wyniki',
+  info:   'Informacja',
+};
+
+// ── Generate all days in range ────────────────────────────────────────────────
+
+const RANGE_START = ld('2026-05-01');
+const RANGE_END   = ld('2026-08-12');
+
+const allDays: Date[] = [];
+{
+  const c = new Date(RANGE_START);
+  while (c <= RANGE_END) { allDays.push(new Date(c)); c.setDate(c.getDate() + 1); }
+}
+
+// ── Map events onto days ──────────────────────────────────────────────────────
+
+type DayEntry = { event: Event; isStart: boolean };
+const dayMap = new Map<string, DayEntry[]>();
+
+for (const ev of events) {
+  const evStart = ld(ev.dateStart);
+  const evEnd   = ev.dateEnd ? ld(ev.dateEnd) : new Date(evStart);
+  const c = new Date(Math.max(evStart.getTime(), RANGE_START.getTime()));
+  const last = new Date(Math.min(evEnd.getTime(), RANGE_END.getTime()));
+  while (c <= last) {
+    const key = dk(c);
+    if (!dayMap.has(key)) dayMap.set(key, []);
+    dayMap.get(key)!.push({ event: ev, isStart: dk(c) === dk(evStart) });
+    c.setDate(c.getDate() + 1);
+  }
+}
+
+// ── Today ─────────────────────────────────────────────────────────────────────
+
+const today = new Date(); today.setHours(0, 0, 0, 0);
+const todayKey = dk(today);
+---
+
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rekrutacja do liceum 2026/2027 — harmonogram</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    :root {
+      --c-bg:        #f8f7f4;
+      --c-surface:   #ffffff;
+      --c-border:    #e2ddd8;
+      --c-text:      #1c1917;
+      --c-muted:     #78716c;
+      --c-weekend:   #f2ece5;
+
+      --c-action:    #2563eb;  --c-action-bg: #eff6ff;
+      --c-exam:      #7c3aed;  --c-exam-bg:   #f5f3ff;
+      --c-result:    #059669;  --c-result-bg: #ecfdf5;
+      --c-info:      #78716c;  --c-info-bg:   #f5f5f4;
+      --c-urgent:    #dc2626;  --c-urgent-bg: #fef2f2;
+    }
+
+    body {
+      margin: 0;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Sticky header ── */
+    .page-header {
+      background: var(--c-surface);
+      border-bottom: 1px solid var(--c-border);
+      padding: 20px 32px 14px;
+      text-align: center;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .page-header h1 {
+      margin: 0 0 3px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .page-header p { margin: 0; font-size: 12px; color: var(--c-muted); }
+    .page-header a { color: var(--c-action); text-decoration: none; }
+    .page-header a:hover { text-decoration: underline; }
+
+    /* ── Legend ── */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 16px;
+      justify-content: center;
+      padding: 8px 24px;
+      background: var(--c-surface);
+      border-bottom: 2px solid var(--c-border);
+      position: sticky;
+      top: 64px; /* approximate page-header height */
+      z-index: 29;
+    }
+    .li {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--c-muted);
+    }
+    .ld { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Calendar wrapper ── */
+    .calendar {
+      max-width: 1140px;
+      margin: 0 auto;
+      padding: 0 16px 80px;
+      border-left: 1px solid var(--c-border);
+      border-right: 1px solid var(--c-border);
+    }
+
+    /* ── Month header ── */
+    .month-sep {
+      background: var(--c-bg);
+      padding: 20px 0 0;
+      /* top offset set by JS after measuring sticky bars */
+      position: sticky;
+      z-index: 10;
+    }
+    .month-sep-inner {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--c-text);
+      border-bottom: 2px solid var(--c-text);
+      padding-bottom: 5px;
+    }
+
+    /* ── Day row ── */
+    .day-row {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      border-bottom: 1px solid var(--c-border);
+      background: var(--c-surface);
+      min-height: 32px;
+    }
+
+    .day-row.weekend { background: var(--c-weekend); }
+
+    /* today: red outline inset */
+    .day-row.today {
+      outline: 2px solid #f87171;
+      outline-offset: -1px;
+      background: #fffcf8;
+      position: relative;
+      z-index: 2;
+    }
+
+    /* ── Date label column ── */
+    .day-label {
+      border-right: 1px solid var(--c-border);
+      padding: 4px 10px 4px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      justify-content: center;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .day-dow {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--c-muted);
+      line-height: 1;
+    }
+    .day-num {
+      font-size: 20px;
+      font-weight: 300;
+      line-height: 1.1;
+      color: var(--c-text);
+    }
+    .today-tag {
+      font-size: 7px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #ef4444;
+      line-height: 1;
+    }
+
+    .weekend .day-dow,
+    .weekend .day-num { color: #b8b0a8; }
+
+    .today .day-dow  { color: #ef4444; }
+    .today .day-num  { color: #ef4444; font-weight: 600; }
+
+    /* ── Content column ── */
+    .day-content {
+      padding: 4px 0 4px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      justify-content: center;
+    }
+
+    /* Gantt-style bar for span days */
+    .span-bar {
+      height: 6px;
+      border-radius: 3px;
+      opacity: 0.55;
+    }
+    .span-bar.cat-action { background: var(--c-action-bg); color: var(--c-action); }
+    .span-bar.cat-exam   { background: var(--c-exam-bg);   color: var(--c-exam); }
+    .span-bar.cat-result { background: var(--c-result-bg); color: var(--c-result); }
+    .span-bar.cat-info   { background: var(--c-info-bg);   color: var(--c-info); }
+    .span-bar.urgent     { background: var(--c-urgent-bg); color: var(--c-urgent); }
+
+    /* Full event card for start days */
+    .event-card {
+      border-left: 3px solid transparent;
+      border-radius: 0 6px 6px 0;
+      padding: 8px 14px;
+      margin: 2px 0;
+    }
+    .event-card.cat-action { border-color: var(--c-action); background: #f0f6ff; }
+    .event-card.cat-exam   { border-color: var(--c-exam);   background: #f7f5ff; }
+    .event-card.cat-result { border-color: var(--c-result); background: #f0fdf8; }
+    .event-card.cat-info   { border-color: var(--c-info);   background: #fafaf9; }
+    .event-card.urgent     { border-color: var(--c-urgent); background: var(--c-urgent-bg); }
+
+    .ec-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 3px;
+    }
+    .ec-date { font-size: 11px; color: var(--c-muted); font-weight: 500; }
+    .ec-time { font-size: 11px; color: var(--c-muted); }
+
+    .badge {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 1px 6px;
+      border-radius: 20px;
+    }
+    .badge-action { background: var(--c-action-bg); color: var(--c-action); }
+    .badge-exam   { background: var(--c-exam-bg);   color: var(--c-exam); }
+    .badge-result { background: var(--c-result-bg); color: var(--c-result); }
+    .badge-info   { background: var(--c-info-bg);   color: var(--c-info); }
+    .badge-urgent { background: var(--c-urgent-bg); color: var(--c-urgent); }
+
+    .ec-title { font-size: 14px; font-weight: 600; line-height: 1.35; margin-bottom: 2px; }
+    .ec-desc  { font-size: 12px; color: var(--c-muted); line-height: 1.5; }
+
+    @media (max-width: 600px) {
+      .calendar { padding: 0 0 60px; }
+      .day-row { grid-template-columns: 56px 1fr; }
+      .day-num { font-size: 16px; }
+      .page-header { padding: 14px 16px 10px; }
+      .page-header h1 { font-size: 15px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="page-header" id="page-header">
+  <h1>Rekrutacja do liceum — harmonogram 2026/2027</h1>
+  <p>
+    System: <a href="https://rekrutacje-warszawa.pzo.edu.pl" target="_blank" rel="noopener">rekrutacje-warszawa.pzo.edu.pl</a>
+    &nbsp;·&nbsp;
+    Kuratorium: <a href="https://www.kuratorium.waw.pl" target="_blank" rel="noopener">kuratorium.waw.pl</a>
+  </p>
+</div>
+
+<div class="legend" id="legend">
+  <span class="li"><span class="ld" style="background:var(--c-action)"></span>Do zrobienia</span>
+  <span class="li"><span class="ld" style="background:var(--c-exam)"></span>Sprawdzian / egzamin</span>
+  <span class="li"><span class="ld" style="background:var(--c-result)"></span>Wyniki</span>
+  <span class="li"><span class="ld" style="background:var(--c-info)"></span>Informacja</span>
+  <span class="li"><span class="ld" style="background:var(--c-urgent)"></span>Krytyczny termin</span>
+</div>
+
+<div class="calendar">
+  {allDays.map(day => {
+    const key = dk(day);
+    const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+    const isToday   = key === todayKey;
+    const dayEntries   = dayMap.get(key) ?? [];
+    const startEntries = dayEntries.filter(e => e.isStart);
+    const spanEntries  = dayEntries.filter(e => !e.isStart);
+
+    return <>
+      {day.getDate() === 1 && (
+        <div class="month-sep">
+          <div class="month-sep-inner">{MON_PL[day.getMonth()]} {day.getFullYear()}</div>
+        </div>
+      )}
+      <div class={[
+        'day-row',
+        isWeekend ? 'weekend' : '',
+        isToday   ? 'today'   : '',
+      ].filter(Boolean).join(' ')}>
+
+        <div class="day-label">
+          {isToday && <span class="today-tag">dziś</span>}
+          <span class="day-dow">{DAY_PL[day.getDay()]}</span>
+          <span class="day-num">{day.getDate()}</span>
+        </div>
+
+        <div class="day-content">
+          {spanEntries.map(e => (
+            <div class={['span-bar', `cat-${e.event.category}`, e.event.urgent ? 'urgent' : ''].filter(Boolean).join(' ')}
+                 title={e.event.title}></div>
+          ))}
+          {startEntries.map(e => (
+            <div class={['event-card', `cat-${e.event.category}`, e.event.urgent ? 'urgent' : '', e.event.estimated ? 'estimated' : ''].filter(Boolean).join(' ')}>
+              <div class="ec-meta">
+                <span class="ec-date">{rangeLabel(e.event)}</span>
+                {e.event.timeEnd && <span class="ec-time">do godz. {e.event.timeEnd}</span>}
+                <span class={`badge badge-${e.event.urgent ? 'urgent' : e.event.category}`}>
+                  {e.event.urgent ? 'Krytyczny termin' : CAT_LABEL[e.event.category]}
+                </span>
+              </div>
+              <div class="ec-title">{e.event.title}</div>
+              <div class="ec-desc">{e.event.description}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>;
+  })}
+</div>
+
+<script>
+  // Set month-sep sticky offset to match combined header + legend height
+  const headerH = document.getElementById('page-header')!.offsetHeight;
+  const legendH = document.getElementById('legend')!.offsetHeight;
+  const offset = headerH + legendH;
+  document.querySelectorAll<HTMLElement>('.month-sep').forEach(el => {
+    el.style.top = `${offset}px`;
+  });
+
+  // Also update legend sticky top to match header height
+  document.getElementById('legend')!.style.top = `${headerH}px`;
+</script>
+
+</body>
+</html>
